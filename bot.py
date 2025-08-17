@@ -2,78 +2,171 @@ import telebot
 import sqlite3
 import os
 import time
+import logging
 
-print("="*50)
-print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Запуск бота")
-print("="*50)
-
-TOKEN = os.environ['TOKEN']
-bot = telebot.TeleBot(TOKEN)
-
-conn = sqlite3.connect('users.db', check_same_thread=False)
-cursor = conn.cursor()
-cursor.execute('''
-CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    user_name TEXT,
-    firstname TEXT,
-    lastname TEXT,
-    registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+# Настройка логирования
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
 )
-''')
-conn.commit()
+logger = logging.getLogger(__name__)
+
+print("="*50)
+print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Запуск бота TrendScope")
+print("="*50)
+
+# Инициализация бота
+TOKEN = os.getenv('TOKEN')
+if not TOKEN:
+    logger.error("Токен не найден! Убедитесь, что переменная TOKEN установлена.")
+    exit(1)
+
+bot = telebot.TeleBot(TOKEN)
+MANAGER_ID = 5661996565
+
+# База данных
+def init_db():
+    conn = sqlite3.connect('users.db', check_same_thread=False)
+    cursor = conn.cursor()
+    
+    # Создаем таблицу с улучшенной структурой
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS users (
+        user_id INTEGER PRIMARY KEY,
+        username TEXT,
+        first_name TEXT,
+        last_name TEXT,
+        registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        demo_requested BOOLEAN DEFAULT 0
+    )
+    ''')
+    
+    # Создаем индекс для быстрого поиска
+    cursor.execute('''
+    CREATE INDEX IF NOT EXISTS idx_user_id ON users (user_id)
+    ''')
+    
+    conn.commit()
+    return conn, cursor
+
+conn, cursor = init_db()
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    user_id = message.from_user.id
-    user_name = message.from_user.username
-    firstname = message.from_user.first_name
-    lastname = message.from_user.last_name
-    cursor.execute('SELECT * FROM users WHERE user_id = ?', (user_id, ))
-    if not cursor.fetchone():
+    user = message.from_user
+    try:
+        # Проверяем существование пользователя
+        cursor.execute('SELECT 1 FROM users WHERE user_id = ?', (user.id,))
+        exists = cursor.fetchone()
+        
+        if not exists:
+            # Регистрируем нового пользователя
+            cursor.execute('''
+            INSERT INTO users (user_id, username, first_name, last_name)
+            VALUES (?, ?, ?, ?)
+            ''', (user.id, user.username, user.first_name, user.last_name))
+            conn.commit()
+            
+            # Уведомляем менеджера
+            bot.send_message(
+                MANAGER_ID,
+                f"🚀 Новый пользователь TrendScope!\n"
+                f"ID: {user.id}\n"
+                f"Username: @{user.username}\n"
+                f"Имя: {user.first_name} {user.last_name}"
+            )
+            logger.info(f"Новый пользователь: {user.id}")
+        else:
+            # Обновляем данные существующего пользователя
+            cursor.execute('''
+            UPDATE users SET 
+                username = ?,
+                first_name = ?,
+                last_name = ?
+            WHERE user_id = ?
+            ''', (user.username, user.first_name, user.last_name, user.id))
+            conn.commit()
+
+        # Отправляем информационное сообщение
+        bot.send_message(
+            message.chat.id,
+            '<b>TrendScope - ваш помощник в анализе контента</b> 🔍\n\n'
+            '• <b>Мониторинг</b> выбранных источников\n'
+            '• <b>Оценка динамики</b> просмотров публикаций\n'
+            '• <b>Контроль показателей</b> через 1, 3, 24 часа и 7 дней\n\n'
+            '<b>Получайте уведомления о трендах:</b>\n'
+            '→ Ссылка и описание публикации\n'
+            '→ Показатели вовлеченности\n'
+            '→ Ранние метрики просмотров\n\n'
+            'Сосредоточьтесь на создании контента вместо рутинного анализа.\n\n'
+            '<b>Готовы оптимизировать работу?</b>\n'
+            'Напишите <b>"ДА"</b> для подключения демо-версии.',
+            parse_mode='HTML'
+        )
+
+    except Exception as e:
+        logger.error(f"Ошибка в /start: {str(e)}")
+        bot.send_message(message.chat.id, "⚠️ Произошла техническая ошибка. Попробуйте позже.")
+
+@bot.message_handler(func=lambda m: m.text and m.text.upper() == "ДА")
+def handle_demo_request(message):
+    try:
+        user = message.from_user
+        
+        # Проверяем регистрацию пользователя
+        cursor.execute('SELECT 1 FROM users WHERE user_id = ?', (user.id,))
+        if not cursor.fetchone():
+            bot.send_message(
+                message.chat.id,
+                "ℹ️ Пожалуйста, сначала зарегистрируйтесь с помощью /start"
+            )
+            return
+
+        # Проверяем предыдущие запросы
         cursor.execute(
-            '''
-        INSERT INTO users (user_id, user_name, firstname, lastname)
-        VALUES(?, ?, ?, ?)
-        ''', (user_id, user_name, firstname, lastname))
-        conn.commit()
-    bot.send_message(
-        message.chat.id, 
-        '<b>TrendScope - ваш помощник в анализе контента</b>🔍.\n\n'
-        '•<b>Мониторит</b> выбранных источников\n'
-        '•<b>Оценка</b> <b>динамики</b> просмотров новых публикаций\n'
-        '•<b>Контроль</b> показателей через 1, 3, 24 часа и 7 дней\n\n'
-        '<b>Получайте уведомления о материалах с высокой динамикой:</b> 💬\n'
-        '→ Ссылка и описание публикации \n'
-        '→ Показатели вовлеченности\n'
-        '→ Ранние метрики просмотров\n\n'
-        'Сосредоточьтесь на создании востребованного контента\n'
-        'вместо ручного анализа. Наш сервис отслеживает тренды за вас.\n\n'
-        'Готовы оптимизировать работу?\n' 
-        'Напишите <b>"ДА"</b> для подключения демо-версии.',
-        parse_mode='html'
-    )
+            'SELECT demo_requested FROM users WHERE user_id = ?', 
+            (user.id,)
+        )
+        demo_requested = cursor.fetchone()[0]
+        
+        if not demo_requested:
+            # Обновляем статус демо
+            cursor.execute('''
+            UPDATE users SET demo_requested = 1
+            WHERE user_id = ?
+            ''', (user.id,))
+            conn.commit()
+            
+            # Уведомляем менеджера о запросе демо
+            bot.send_message(
+                MANAGER_ID,
+                f"🔥 Запрос на демо-версию!\n"
+                f"Пользователь: @{user.username}\n"
+                f"ID: {user.id}\n"
+                f"Имя: {user.first_name} {user.last_name}"
+            )
+            logger.info(f"Запрос демо от: {user.id}")
 
-    manager_id = 5661996565
-    bot.send_message(
-        manager_id, 
-        f'Новый пользователь!\nID: {user_id}\nUsername: @{user_name}\nИмя: {firstname} {lastname}'
-    )
+        bot.send_message(
+            message.chat.id,
+            "✅ Спасибо за интерес! Наш менеджер свяжется с вами в ближайшее время "
+            "для подключения демо-версии."
+        )
 
-@bot.message_handler(func=lambda message: "ДА" in message.text.upper())
-def handle_da(message):
-    bot.send_message(message.chat.id, 'С Вами в ближайшее время свяжется наш менеджер')
+    except Exception as e:
+        logger.error(f"Ошибка обработки ДА: {str(e)}")
+        bot.send_message(message.chat.id, "⚠️ Произошла ошибка при обработке запроса.")
 
 def run_bot():
+    logger.info(f"Бот запущен | Пользователей: {cursor.execute('SELECT COUNT(*) FROM users').fetchone()[0]}")
     while True:
         try:
-            print(f"[{time.strftime('%H:%M:%S')}] Бот запущен")
-            bot.polling(none_stop=True, interval=2, timeout=20)
+            bot.infinity_polling()
         except Exception as e:
-            print(f"[{time.strftime('%H:%M:%S')}] Ошибка: {str(e)}")
-            print("Перезапуск через 10 секунд...")
+            logger.error(f"Ошибка: {str(e)}")
+            logger.info("Перезапуск через 10 секунд...")
             time.sleep(10)
 
 if __name__ == '__main__':
+    logger.info(f"Токен: {'установлен' if TOKEN else 'НЕ НАЙДЕН!'}")
     run_bot()
