@@ -1,19 +1,26 @@
-FROM python:3.9-slim
+FROM python:3.11-slim
 
-# Создаем пользователя для безопасности
+# Установка зависимостей
+RUN apt-get update && apt-get install -y \
+    sqlite3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Создание непривилегированного пользователя
 RUN useradd -m appuser
 WORKDIR /app
 RUN chown appuser:appuser /app
 
-# Устанавливаем зависимости
+# Копирование требований
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Копируем код и меняем владельца
+# Копирование кода
 COPY --chown=appuser:appuser . .
 
-# Переключаемся на непривилегированного пользователя
+# Настройка базы данных
+RUN sqlite3 /app/users.db "VACUUM;"
+
 USER appuser
 
 CMD ["python", "bot.py"]
