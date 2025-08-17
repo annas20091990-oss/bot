@@ -26,30 +26,36 @@ MANAGER_ID = 5661996565
 
 # База данных
 def init_db():
-    conn = sqlite3.connect('users.db', check_same_thread=False)
-    cursor = conn.cursor()
-    
-    # Создаем таблицу с улучшенной структурой
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS users (
-        user_id INTEGER PRIMARY KEY,
-        username TEXT,
-        first_name TEXT,
-        last_name TEXT,
-        registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        demo_requested BOOLEAN DEFAULT 0
-    )
-    ''')
-    
-    # Создаем индекс для быстрого поиска
-    cursor.execute('''
-    CREATE INDEX IF NOT EXISTS idx_user_id ON users (user_id)
-    ''')
-    
-    conn.commit()
-    return conn, cursor
+    try:
+        # Явно указываем путь к файлу БД
+        db_path = os.path.join(os.getcwd(), 'users.db')
+        conn = sqlite3.connect(db_path, check_same_thread=False)
+        cursor = conn.cursor()
+        
+        # Создаем таблицу
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            username TEXT,
+            first_name TEXT,
+            last_name TEXT,
+            registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            demo_requested BOOLEAN DEFAULT 0
+        )
+        ''')
+        conn.commit()
+        logger.info("База данных успешно инициализирована")
+        return conn, cursor
+    except Exception as e:
+        logger.error(f"Ошибка инициализации БД: {str(e)}")
+        raise
 
-conn, cursor = init_db()
+try:
+    conn, cursor = init_db()
+    logger.info(f"Текущее количество пользователей: {cursor.execute('SELECT COUNT(*) FROM users').fetchone()[0]}")
+except Exception as e:
+    logger.critical(f"Критическая ошибка при инициализации БД: {str(e)}")
+    exit(1)
 
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -108,7 +114,7 @@ def start(message):
         logger.error(f"Ошибка в /start: {str(e)}")
         bot.send_message(message.chat.id, "⚠️ Произошла техническая ошибка. Попробуйте позже.")
 
-@bot.message_handler(func=lambda m: m.text and m.text.upper() == "ДА")
+@bot.message_handler(func=lambda m: m.text and m.text.upper().strip() == "ДА")
 def handle_demo_request(message):
     try:
         user = message.from_user
@@ -158,9 +164,10 @@ def handle_demo_request(message):
         bot.send_message(message.chat.id, "⚠️ Произошла ошибка при обработке запроса.")
 
 def run_bot():
-    logger.info(f"Бот запущен | Пользователей: {cursor.execute('SELECT COUNT(*) FROM users').fetchone()[0]}")
+    logger.info("Бот запущен")
     while True:
         try:
+            logger.info(f"Статус: Активен | Пользователей: {cursor.execute('SELECT COUNT(*) FROM users').fetchone()[0]}")
             bot.infinity_polling()
         except Exception as e:
             logger.error(f"Ошибка: {str(e)}")
