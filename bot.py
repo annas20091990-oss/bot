@@ -3,6 +3,8 @@ import sqlite3
 import os
 import time
 import logging
+from flask import Flask
+import threading
 
 # Настройка логирования
 logging.basicConfig(
@@ -10,6 +12,17 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# Создаем минимальный HTTP-сервер для Render.com
+app = Flask(__name__)
+
+@app.route('/')
+def health_check():
+    return "TrendScope Bot is running", 200
+
+def run_flask():
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
 
 print("="*50)
 print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Запуск бота TrendScope")
@@ -168,12 +181,23 @@ def run_bot():
     while True:
         try:
             logger.info(f"Статус: Активен | Пользователей: {cursor.execute('SELECT COUNT(*) FROM users').fetchone()[0]}")
-            bot.infinity_polling()
+            
+            # Критически важное исправление:
+            bot.remove_webhook()
+            time.sleep(1)
+            bot.polling(none_stop=True, interval=3, timeout=25)
+            
         except Exception as e:
             logger.error(f"Ошибка: {str(e)}")
-            logger.info("Перезапуск через 10 секунд...")
-            time.sleep(10)
+            logger.info("Перезапуск через 30 секунд...")
+            time.sleep(30)
 
 if __name__ == '__main__':
     logger.info(f"Токен: {'установлен' if TOKEN else 'НЕ НАЙДЕН!'}")
+    
+    # Запускаем HTTP-сервер в отдельном потоке
+    flask_thread = threading.Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+    
     run_bot()
