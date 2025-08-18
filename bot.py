@@ -35,7 +35,7 @@ if not TOKEN:
     exit(1)
 
 bot = telebot.TeleBot(TOKEN)
-MANAGER_ID = 5661996565
+MANAGER_ID = 5661996565  # ID менеджера для уведомлений
 
 # База данных
 def init_db():
@@ -126,6 +126,37 @@ def start(message):
     except Exception as e:
         logger.error(f"Ошибка в /start: {str(e)}")
         bot.send_message(message.chat.id, "⚠️ Произошла техническая ошибка. Попробуйте позже.")
+
+# ======= ДОБАВЛЕНА КОМАНДА /stats ======= #
+@bot.message_handler(commands=['stats'])
+def send_stats(message):
+    # Проверяем, что команду отправляет менеджер
+    if message.from_user.id != MANAGER_ID:
+        bot.reply_to(message, "⚠️ Доступ запрещен")
+        return
+        
+    try:
+        # Получаем общее количество пользователей
+        cursor.execute('SELECT COUNT(*) FROM users')
+        total_users = cursor.fetchone()[0]
+        
+        # Получаем количество запросов демо-версии
+        cursor.execute('SELECT COUNT(*) FROM users WHERE demo_requested=1')
+        demo_requests = cursor.fetchone()[0]
+        
+        # Формируем ответ
+        response = (
+            "📊 Статистика бота TrendScope:\n"
+            f"• Всего пользователей: {total_users}\n"
+            f"• Запросов на демо: {demo_requests}"
+        )
+        
+        bot.reply_to(message, response)
+        
+    except Exception as e:
+        logger.error(f"Ошибка в /stats: {str(e)}")
+        bot.reply_to(message, "⚠️ Ошибка получения статистики")
+# ======================================= #
 
 @bot.message_handler(func=lambda m: m.text and m.text.upper().strip() == "ДА")
 def handle_demo_request(message):
