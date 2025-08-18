@@ -5,6 +5,8 @@ import time
 import logging
 from flask import Flask
 import threading
+import io
+import datetime  # Добавлен импорт datetime
 
 # Настройка логирования
 logging.basicConfig(
@@ -86,7 +88,7 @@ def start(message):
             ''', (user.id, user.username, user.first_name, user.last_name))
             conn.commit()
             
-            # Уведомляем менеджера
+            # Уведомляем менеджеру
             bot.send_message(
                 MANAGER_ID,
                 f"🚀 Новый пользователь TrendScope!\n"
@@ -127,26 +129,21 @@ def start(message):
         logger.error(f"Ошибка в /start: {str(e)}")
         bot.send_message(message.chat.id, "⚠️ Произошла техническая ошибка. Попробуйте позже.")
 
-# ======= ДОБАВЛЕНА КОМАНДА /stats ======= #
 @bot.message_handler(commands=['stats'])
 def send_stats(message):
-    # Проверяем, что команду отправляет менеджер
     if message.from_user.id != MANAGER_ID:
         bot.reply_to(message, "⚠️ Доступ запрещен")
         return
         
     try:
-        # Получаем общее количество пользователей
         cursor.execute('SELECT COUNT(*) FROM users')
         total_users = cursor.fetchone()[0]
         
-        # Получаем количество запросов демо-версии
         cursor.execute('SELECT COUNT(*) FROM users WHERE demo_requested=1')
         demo_requests = cursor.fetchone()[0]
         
-        # Формируем ответ
         response = (
-            "📊 Статистика бота TrendScope:\n"
+            "📊 Статистика бота:\n"
             f"• Всего пользователей: {total_users}\n"
             f"• Запросов на демо: {demo_requests}"
         )
@@ -156,7 +153,68 @@ def send_stats(message):
     except Exception as e:
         logger.error(f"Ошибка в /stats: {str(e)}")
         bot.reply_to(message, "⚠️ Ошибка получения статистики")
-# ======================================= #
+
+@bot.message_handler(commands=['users'])
+def send_users_list(message):
+    # Проверяем, что команду отправляет менеджер
+    if message.from_user.id != MANAGER_ID:
+        bot.reply_to(message, "⚠️ Доступ запрещен")
+        return
+        
+    try:
+        # Получаем всех пользователей
+        cursor.execute('SELECT * FROM users ORDER BY registered_at DESC')
+        users = cursor.fetchall()
+        
+        logger.info(f"Найдено {len(users)} пользователей для выгрузки")
+        
+        if not users:
+            bot.reply_to(message, "В базе данных пока нет пользователей")
+            return
+            
+        # Создаем текстовый файл с данными
+        file_content = "Список пользователей TrendScope:\n\n"
+        file_content += "ID пользователя | Username | Имя | Фамилия | Дата регистрации | Демо запрошено\n"
+        file_content += "-------------------------------------------------------------------------------\n"
+        
+        for user in users:
+            user_id = user[0]
+            username = f"@{user[1]}" if user[1] else "нет"
+            first_name = user[2] or "нет"
+            last_name = user[3] or "нет"
+            
+            # Форматируем дату регистрации
+            reg_date = user[4]
+            if reg_date:
+                # Если дата в строковом формате
+                if isinstance(reg_date, str):
+                    # Убираем миллисекунды если есть
+                    reg_date = reg_date.split('.')[0]
+                formatted_date = str(reg_date)
+            else:
+                formatted_date = "неизвестно"
+            
+            demo_requested = "✅" if user[5] else "❌"
+            
+            file_content += f"{user_id} | {username} | {first_name} | {last_name} | {formatted_date} | {demo_requested}\n"
+        
+        # Создаем файл в памяти
+        file_in_memory = io.BytesIO(file_content.encode('utf-8'))
+        file_in_memory.seek(0)  # КРИТИЧЕСКИ ВАЖНО: перемещаем указатель в начало
+        file_in_memory.name = 'users_list.txt'
+        
+        # Отправляем файл
+        bot.send_document(
+            message.chat.id,
+            file_in_memory,
+            caption="📋 Полный список пользователей"
+        )
+        
+        logger.info(f"Успешно отправлен список из {len(users)} пользователей")
+        
+    except Exception as e:
+        logger.error(f"Ошибка в /users: {str(e)}", exc_info=True)
+        bot.reply_to(message, f"⚠️ Ошибка при получении списка пользователей: {str(e)}")
 
 @bot.message_handler(func=lambda m: m.text and m.text.upper().strip() == "ДА")
 def handle_demo_request(message):
@@ -187,7 +245,7 @@ def handle_demo_request(message):
             ''', (user.id,))
             conn.commit()
             
-            # Уведомляем менеджера о запросе демо
+            # Уведомляем менеджеру о запросе демо
             bot.send_message(
                 MANAGER_ID,
                 f"🔥 Запрос на демо-версию!\n"
@@ -211,11 +269,14 @@ def run_bot():
     logger.info("Бот запущен")
     while True:
         try:
-            logger.info(f"Статус: Активен | Пользователей: {cursor.execute('SELECT COUNT(*) FROM users').fetchone()[0]}")
+            user_count = cursor.execute('SELECT COUNT(*) FROM users').fetchone()[0]
+            logger.info(f"Статус: Активен | Пользователей: {user_count}")
             
-            # Критически важное исправление:
+            # Удаляем вебхук перед запуском
             bot.remove_webhook()
             time.sleep(1)
+            
+            # Запускаем long polling
             bot.polling(none_stop=True, interval=3, timeout=25)
             
         except Exception as e:
