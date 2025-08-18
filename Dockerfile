@@ -5,29 +5,24 @@ RUN apt-get update && apt-get install -y \
     sqlite3 \
     && rm -rf /var/lib/apt/lists/*
 
-# Создаем пользователя
+# Создание пользователя
 RUN useradd -m appuser
 WORKDIR /app
 
-# Копируем зависимости
-COPY requirements.txt .
+# Установка прав на рабочую директорию
+RUN chown -R appuser:appuser /app
 
-# Устанавливаем Python-зависимости
+# Копирование требований
+COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Копируем код
+# Копирование кода
 COPY . .
 
-# Устанавливаем владельца для всей директории
+# Установка владельца для всех файлов
 RUN chown -R appuser:appuser /app
 
-# Создаем файл БД и устанавливаем права
-RUN touch /app/users.db && \
-    chown appuser:appuser /app/users.db && \
-    chmod 664 /app/users.db
-
-# Переключаемся на пользователя appuser
 USER appuser
 
 CMD ["python", "bot.py"]
